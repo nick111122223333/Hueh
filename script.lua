@@ -1,86 +1,105 @@
--- Ensure PlayerGui exists
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
 
--- Check if GUI already exists (prevents duplicates)
-local ScreenGui = PlayerGui:FindFirstChild("SuperRingPartsGUI")
-if not ScreenGui then
-    ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "SuperRingPartsGUI"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.Parent = PlayerGui
-end
+local LocalPlayer = Players.LocalPlayer
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
--- Main Frame
-local MainFrame = ScreenGui:FindFirstChild("MainFrame")
-if not MainFrame then
-    MainFrame = Instance.new("Frame")
-    MainFrame.Name = "MainFrame"
-    MainFrame.Size = UDim2.new(0, 220, 0, 190)
-    MainFrame.Position = UDim2.new(0.5, -110, 0.5, -95)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(204, 0, 0)
-    MainFrame.BorderSizePixel = 0
-    MainFrame.Parent = ScreenGui
+-- GUI SETUP
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DecalShapeGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-    local UICorner = Instance.new("UICorner")
-    UICorner.CornerRadius = UDim.new(0, 20)
-    UICorner.Parent = MainFrame
-end
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 220, 0, 150)
+MainFrame.Position = UDim2.new(0.5, -110, 0.5, -75)
+MainFrame.BackgroundColor3 = Color3.fromRGB(0, 102, 51)
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
 
--- Add the Spawn Image Button
-local SpawnImageButton = MainFrame:FindFirstChild("SpawnImageButton")
-if not SpawnImageButton then
-    SpawnImageButton = Instance.new("TextButton")
-    SpawnImageButton.Name = "SpawnImageButton"
-    SpawnImageButton.Size = UDim2.new(0.8, 0, 0, 35)
-    SpawnImageButton.Position = UDim2.new(0.1, 0, 0.75, 0)
-    SpawnImageButton.Text = "Spawn Image"
-    SpawnImageButton.BackgroundColor3 = Color3.fromRGB(75, 0, 130)
-    SpawnImageButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SpawnImageButton.Font = Enum.Font.Fondamento
-    SpawnImageButton.TextSize = 18
-    SpawnImageButton.Parent = MainFrame
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Position = UDim2.new(0, 0, 0, 0)
+Title.Text = "Decal Shape v1"
+Title.TextColor3 = Color3.fromRGB(255,255,255)
+Title.BackgroundColor3 = Color3.fromRGB(0, 153, 76)
+Title.Font = Enum.Font.Fondamento
+Title.TextSize = 22
+Title.Parent = MainFrame
 
-    local SpawnImageCorner = Instance.new("UICorner")
-    SpawnImageCorner.CornerRadius = UDim.new(0, 10)
-    SpawnImageCorner.Parent = SpawnImageButton
-end
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(0.8, 0, 0, 35)
+ToggleButton.Position = UDim2.new(0.1, 0, 0.35, 0)
+ToggleButton.Text = "Off"
+ToggleButton.BackgroundColor3 = Color3.fromRGB(255,0,0)
+ToggleButton.TextColor3 = Color3.fromRGB(255,255,255)
+ToggleButton.Font = Enum.Font.Fondamento
+ToggleButton.TextSize = 15
+ToggleButton.Parent = MainFrame
 
--- Image spawning function
-local IMAGE_ID = "114128730301476"
-local BLOCK_SIZE = 2
-local OFFSET_BEHIND = 15
-local PIXEL_RES = 16
+-- DECAL SHAPE SETTINGS
+local partSize = 0.5
+local behindOffset = Vector3.new(0,0,5)
+local shapeEnabled = false
 
-local function SpawnVoxelImage()
-    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
-    local folder = Instance.new("Folder", Workspace)
-    folder.Name = "VoxelImage_"..LocalPlayer.Name
+-- Example: Heart Pattern (1 = visible, 0 = transparent)
+local pattern = {
+    {0,1,0,1,0},
+    {1,1,1,1,1},
+    {1,1,1,1,1},
+    {0,1,1,1,0},
+    {0,0,1,0,0},
+}
 
-    local humanoidRootPart = LocalPlayer.Character.HumanoidRootPart
-    local forward = humanoidRootPart.CFrame.LookVector
-    local right = humanoidRootPart.CFrame.RightVector
-    local up = Vector3.new(0,1,0)
+-- FOLDER TO HOLD PARTS
+local Folder = Instance.new("Folder")
+Folder.Name = "DecalShape"
+Folder.Parent = Workspace
 
-    for y = 1, PIXEL_RES do
-        for x = 1, PIXEL_RES do
-            if math.random() > 0.5 then
+-- CREATE PARTS FUNCTION
+local function createShape()
+    -- Clear previous parts
+    Folder:ClearAllChildren()
+
+    for y,row in ipairs(pattern) do
+        for x,val in ipairs(row) do
+            if val == 1 then
                 local part = Instance.new("Part")
-                part.Size = Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+                part.Size = Vector3.new(partSize, partSize, partSize)
                 part.Anchored = true
                 part.CanCollide = false
-                part.Color = Color3.fromHSV(x/PIXEL_RES, 1, 1)
-                part.Position = humanoidRootPart.Position
-                    - forward * OFFSET_BEHIND
-                    + right * ((x - PIXEL_RES/2) * BLOCK_SIZE)
-                    + up * ((PIXEL_RES/2 - y) * BLOCK_SIZE)
-                part.Parent = folder
-
-                if getgenv().Network then
-                    Network.RetainPart(part)
-                end
+                part.Color = Color3.fromRGB(255,0,0)
+                part.Position = humanoidRootPart.Position + behindOffset + Vector3.new((x-3)*partSize,(3-y)*partSize,0)
+                part.Parent = Folder
             end
         end
     end
 end
 
-SpawnImageButton.MouseButton1Click:Connect(SpawnVoxelImage)
+-- TOGGLE BUTTON FUNCTIONALITY
+ToggleButton.MouseButton1Click:Connect(function()
+    shapeEnabled = not shapeEnabled
+    ToggleButton.Text = shapeEnabled and "Shape On" or "Shape Off"
+    ToggleButton.BackgroundColor3 = shapeEnabled and Color3.fromRGB(50,205,50) or Color3.fromRGB(255,0,0)
+    if shapeEnabled then
+        createShape()
+    else
+        Folder:ClearAllChildren()
+    end
+end)
+
+-- MAKE SHAPE FOLLOW PLAYER
+RunService.Heartbeat:Connect(function()
+    if shapeEnabled then
+        local offset = behindOffset
+        for _, part in pairs(Folder:GetChildren()) do
+            part.Position = humanoidRootPart.Position + offset + (part.Position - Folder.Position)
+        end
+        Folder.Position = humanoidRootPart.Position + offset
+    end
+end)
