@@ -1,418 +1,267 @@
--- SuperRingParts.lua
--- Integrated version of your script with a GUI field to replace the decal/asset id at runtime.
--- NOTE: This version adds a "Decal ID" text box + "Apply Decal" button that stores the chosen id in getgenv().CustomDecalId.
--- If you want the script to actually fetch the decal image bytes and spawn parts for non-transparent pixels
--- I can add an HTTP + PNG decode implementation, but I need to know whether you're running in a normal LocalScript
--- (no external HTTP) or in an executor environment that allows syn.request / http.request.
+-- Shape display script
+-- Adds multiple pixel-art shapes (heart, star, smile, triangle) using reusable parts.
+-- Controls:
+--   1-4 = select shape (1 = Heart, 2 = Star, 3 = Smile, 4 = Triangle)
+--   H   = toggle display on / off
+--
+-- Notes:
+-- - Parts used for shapes will be Anchored while shown and CanCollide = false.
+-- - If there are not enough available parts in the workspace, new parts will be created automatically.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
-local SoundService = game:GetService("SoundService")
-local StarterGui = game:GetService("StarterGui")
-local TextChatService = game:GetService("TextChatService")
+local UserInputService = game:GetService("UserInputService")
 
--- ===========
--- CONFIG
--- ===========
--- Default decal id (you can replace this in the GUI)
-getgenv().CustomDecalId = getgenv().CustomDecalId or "123456789" -- put a default id here if you want
+local LocalPlayer = Players.LocalPlayer
+local character = LocalPlayer and (LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait())
+local humanoidRootPart = character and character:WaitForChild("HumanoidRootPart")
 
--- Settings for possible future pixel generation (not active until decoder implemented)
-local pixelSampleResolution = 64 -- max dimension to sample from decal when decoding (placeholder)
-local pixelPartSize = 0.5 -- studs per pixel (placeholder)
-
--- ===========
--- Utility: play sound
--- ===========
-local function playSound(soundId)
-    local sound = Instance.new("Sound")
-    sound.SoundId = "rbxassetid://" .. soundId
-    sound.Parent = SoundService
-    sound:Play()
-    sound.Ended:Connect(function()
-        sound:Destroy()
-    end)
+-- Folder for shape parts
+local ShapeFolder = Workspace:FindFirstChild("ShapePartsFolder")
+if not ShapeFolder then
+    ShapeFolder = Instance.new("Folder")
+    ShapeFolder.Name = "ShapePartsFolder"
+    ShapeFolder.Parent = Workspace
 end
 
-playSound("2865227271") -- initial sound
+local partSpacing = 2
+local behindOffset = Vector3.new(0, 0, -5)
+local shapeEnabled = false
+local currentShapeName = "Heart"
 
--- ===========
--- Existing Network / retain logic (kept mostly intact)
--- ===========
-if not getgenv().Network then
-    getgenv().Network = {
-        BaseParts = {},
-        Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
+-- Pixel patterns for shapes (0 = empty, 1 = filled)
+local Shapes = {
+    Heart = {
+        pattern = {
+            {0,1,0,1,0},
+            {1,1,1,1,1},
+            {1,1,1,1,1},
+            {0,1,1,1,0},
+            {0,0,1,0,0}
+        },
+        color = Color3.fromRGB(255, 50, 100)
+    },
+    Star = {
+        pattern = {
+            {0,0,1,0,1,0,0},
+            {0,0,1,0,1,0,0},
+            {1,1,1,1,1,1,1},
+            {0,0,1,0,1,0,0},
+            {0,1,0,1,0,1,0},
+            {0,0,1,0,1,0,0},
+            {0,0,1,0,1,0,0}
+        },
+        color = Color3.fromRGB(255, 230, 70)
+    },
+    Smile = {
+        pattern = {
+            {0,0,1,1,1,0,0},
+            {0,1,0,0,0,1,0},
+            {1,0,0,0,0,0,1},
+            {1,0,1,0,1,0,1},
+            {1,0,0,0,0,0,1},
+            {0,1,0,1,0,1,0},
+            {0,0,1,1,1,0,0}
+        },
+        color = Color3.fromRGB(100, 200, 255)
+    },
+    Triangle = {
+        -- small isosceles triangle (5x5)
+        pattern = {
+            {0,0,1,0,0},
+            {0,1,1,1,0},
+            {1,1,1,1,1},
+            {0,0,0,0,0},
+            {0,0,0,0,0}
+        },
+        color = Color3.fromRGB(120, 255, 140)
     }
+}
 
-    Network.RetainPart = function(Part)
-        if typeof(Part) == "Instance" and Part:IsA("BasePart") and Part:IsDescendantOf(Workspace) then
-            table.insert(Network.BaseParts, Part)
-            Part.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
-            Part.CanCollide = false
+-- Collect available (reusable) parts: prefer unanchored non-character parts
+local availableParts = {}
+for _, part in ipairs(Workspace:GetDescendants()) do
+    if part:IsA("BasePart") and not part:IsDescendantOf(character) then
+        -- We'll treat these parts as reusable. Ensure they don't collide.
+        part.CanCollide = false
+        table.insert(availableParts, part)
+    end
+end
+
+-- Utility: create a new part to use
+local function createPart()
+    local p = Instance.new("Part")
+    p.Size = Vector3.new(1.5, 1.5, 1.5)
+    p.Anchored = false -- we'll anchor when showing shapes
+    p.CanCollide = false
+    p.Material = Enum.Material.Neon
+    p.Name = "ShapePart"
+    p.Parent = Workspace
+    return p
+end
+
+-- Ensure we have at least n parts available (adds new parts if necessary)
+local function ensureAvailableParts(n)
+    while #availableParts < n do
+        table.insert(availableParts, createPart())
+    end
+end
+
+-- Keep track of which parts are currently assigned to shape so we can release them
+local assignedParts = {}
+
+-- Clear current shape: unassign parts and return them to Workspace (and un-anchor)
+local function clearShape()
+    for _, p in ipairs(assignedParts) do
+        if p and p.Parent then
+            p.Parent = Workspace
+        end
+        if p and p:IsA("BasePart") then
+            p.Anchored = false
+            p.CanCollide = false
         end
     end
-
-    local Folder = Instance.new("Folder", Workspace)
-    Folder.Name = "SuperRingPartsFolder"
-    local Part = Instance.new("Part", Folder)
-    Part.Name = "AnchorPart"
-    Part.Anchored = true
-    Part.CanCollide = false
-    Part.Transparency = 1
-    local Attachment1 = Instance.new("Attachment", Part)
-
-    local function EnablePartControl()
-        LocalPlayer.ReplicationFocus = Workspace
-        RunService.Heartbeat:Connect(function()
-            pcall(function()
-                sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-            end)
-            for _, Part in pairs(Network.BaseParts) do
-                if Part:IsDescendantOf(Workspace) then
-                    Part.Velocity = Network.Velocity
-                end
-            end
-        end)
-    end
-
-    EnablePartControl()
+    assignedParts = {}
 end
 
--- ===========
--- GUI (Main + toggle controls kept, plus decal id replacement UI)
--- ===========
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "SuperRingPartsGUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 320, 0, 240)
-MainFrame.Position = UDim2.new(0.5, -160, 0.5, -120)
-MainFrame.BackgroundColor3 = Color3.fromRGB(0, 102, 51)
-MainFrame.BorderSizePixel = 0
-MainFrame.Parent = ScreenGui
-
-local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0, 14)
-
-local Title = Instance.new("TextLabel", MainFrame)
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.Position = UDim2.new(0, 0, 0, 0)
-Title.Text = "Super Ring Parts v5"
-Title.TextColor3 = Color3.fromRGB(255,255,255)
-Title.BackgroundColor3 = Color3.fromRGB(0,153,76)
-Title.Font = Enum.Font.Fondamento
-Title.TextSize = 22
-
--- Toggle
-local ToggleButton = Instance.new("TextButton", MainFrame)
-ToggleButton.Size = UDim2.new(0.5, 0, 0, 36)
-ToggleButton.Position = UDim2.new(0.25, 0, 0.25, 0)
-ToggleButton.Text = "Ring Parts Off"
-ToggleButton.BackgroundColor3 = Color3.fromRGB(160,82,45)
-ToggleButton.TextColor3 = Color3.fromRGB(255,255,255)
-ToggleButton.Font = Enum.Font.Fondamento
-ToggleButton.TextSize = 15
-local ToggleCorner = Instance.new("UICorner", ToggleButton); ToggleCorner.CornerRadius = UDim.new(0,10)
-
--- Radius controls
-local DecreaseRadius = Instance.new("TextButton", MainFrame)
-DecreaseRadius.Size = UDim2.new(0.18,0,0,32)
-DecreaseRadius.Position = UDim2.new(0.06,0,0.55,0)
-DecreaseRadius.Text = "<"
-DecreaseRadius.BackgroundColor3 = Color3.fromRGB(255,255,0)
-DecreaseRadius.Font = Enum.Font.Fondamento
-DecreaseRadius.TextSize = 18
-local IncreaseRadius = Instance.new("TextButton", MainFrame)
-IncreaseRadius.Size = UDim2.new(0.18,0,0,32)
-IncreaseRadius.Position = UDim2.new(0.76,0,0.55,0)
-IncreaseRadius.Text = ">"
-IncreaseRadius.BackgroundColor3 = Color3.fromRGB(255,255,0)
-IncreaseRadius.Font = Enum.Font.Fondamento
-IncreaseRadius.TextSize = 18
-local RadiusDisplay = Instance.new("TextLabel", MainFrame)
-RadiusDisplay.Size = UDim2.new(0.52,0,0,32)
-RadiusDisplay.Position = UDim2.new(0.24,0,0.55,0)
-RadiusDisplay.Text = "Radius: 50"
-RadiusDisplay.BackgroundColor3 = Color3.fromRGB(255,255,0)
-RadiusDisplay.Font = Enum.Font.Fondamento
-RadiusDisplay.TextSize = 15
-local RadiusCorner = Instance.new("UICorner", RadiusDisplay); RadiusCorner.CornerRadius = UDim.new(0,10)
-
--- Decal ID UI
-local DecalLabel = Instance.new("TextLabel", MainFrame)
-DecalLabel.Size = UDim2.new(0.9,0,0,20)
-DecalLabel.Position = UDim2.new(0.05,0,0.75,0)
-DecalLabel.Text = "Decal / Texture Asset ID:"
-DecalLabel.BackgroundTransparency = 1
-DecalLabel.TextColor3 = Color3.fromRGB(255,255,255)
-DecalLabel.Font = Enum.Font.Fondamento
-DecalLabel.TextSize = 14
-
-local DecalTextBox = Instance.new("TextBox", MainFrame)
-DecalTextBox.Size = UDim2.new(0.9,0,0,28)
-DecalTextBox.Position = UDim2.new(0.05,0,0.79,0)
-DecalTextBox.Text = tostring(getgenv().CustomDecalId)
-DecalTextBox.ClearTextOnFocus = false
-DecalTextBox.Font = Enum.Font.Fondamento
-DecalTextBox.TextSize = 14
-
-local ApplyDecalButton = Instance.new("TextButton", MainFrame)
-ApplyDecalButton.Size = UDim2.new(0.9,0,0,28)
-ApplyDecalButton.Position = UDim2.new(0.05,0,0.92,0)
-ApplyDecalButton.Text = "Apply Decal ID"
-ApplyDecalButton.BackgroundColor3 = Color3.fromRGB(50,205,50)
-ApplyDecalButton.Font = Enum.Font.Fondamento
-ApplyDecalButton.TextSize = 16
-local ApplyDecalCorner = Instance.new("UICorner", ApplyDecalButton); ApplyDecalCorner.CornerRadius = UDim.new(0,8)
-
--- Minimizing & dragging kept minimal for readability
-local MinimizeButton = Instance.new("TextButton", MainFrame)
-MinimizeButton.Size = UDim2.new(0, 30, 0, 30)
-MinimizeButton.Position = UDim2.new(1, -38, 0, 6)
-MinimizeButton.Text = "-"
-MinimizeButton.BackgroundColor3 = Color3.fromRGB(0,255,0)
-MinimizeButton.Font = Enum.Font.Fondamento
-MinimizeButton.TextSize = 15
-local MinimizeCorner = Instance.new("UICorner", MinimizeButton); MinimizeCorner.CornerRadius = UDim.new(0,15)
-
--- Basic dragging
-local dragging, dragInput, dragStart, startPos
-local function update(input)
-    local delta = input.Position - dragStart
-    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-end
-MainFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
-MainFrame.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        update(input)
-    end
-end)
-
--- ===========
--- Ring generation logic (kept from your script)
--- ===========
-local radius = 50
-local height = 100
-local rotationSpeed = 0.5
-local attractionStrength = 1000
-local ringPartsEnabled = false
-
-local function RetainPart(Part)
-    if Part:IsA("BasePart") and not Part.Anchored and Part:IsDescendantOf(workspace) then
-        if Part.Parent == LocalPlayer.Character or Part:IsDescendantOf(LocalPlayer.Character) then
-            return false
-        end
-        Part.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
-        Part.CanCollide = false
-        return true
-    end
-    return false
-end
-
-local parts = {}
-local function addPart(part)
-    if RetainPart(part) then
-        if not table.find(parts, part) then
-            table.insert(parts, part)
-        end
-    end
-end
-
-local function removePart(part)
-    local index = table.find(parts, part)
-    if index then
-        table.remove(parts, index)
-    end
-end
-
-for _, part in pairs(workspace:GetDescendants()) do
-    addPart(part)
-end
-
-workspace.DescendantAdded:Connect(addPart)
-workspace.DescendantRemoving:Connect(removePart)
-
-RunService.Heartbeat:Connect(function()
-    if not ringPartsEnabled then return end
-    local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        local tornadoCenter = humanoidRootPart.Position
-        for _, part in pairs(parts) do
-            if part.Parent and not part.Anchored then
-                local pos = part.Position
-                local distance = (Vector3.new(pos.X, tornadoCenter.Y, pos.Z) - tornadoCenter).Magnitude
-                local angle = math.atan2(pos.Z - tornadoCenter.Z, pos.X - tornadoCenter.X)
-                local newAngle = angle + math.rad(rotationSpeed)
-                local targetPos = Vector3.new(
-                    tornadoCenter.X + math.cos(newAngle) * math.min(radius, distance),
-                    tornadoCenter.Y + (height * (math.abs(math.sin((pos.Y - tornadoCenter.Y) / height)))),
-                    tornadoCenter.Z + math.sin(newAngle) * math.min(radius, distance)
-                )
-                local directionToTarget = (targetPos - part.Position).unit
-                part.Velocity = directionToTarget * attractionStrength
-            end
-        end
-    end
-end)
-
--- ===========
--- Button functionality
--- ===========
-ToggleButton.MouseButton1Click:Connect(function()
-    ringPartsEnabled = not ringPartsEnabled
-    ToggleButton.Text = ringPartsEnabled and "Ring Parts On" or "Ring Parts Off"
-    ToggleButton.BackgroundColor3 = ringPartsEnabled and Color3.fromRGB(50,205,50) or Color3.fromRGB(160,82,45)
-    playSound("12221967")
-end)
-
-DecreaseRadius.MouseButton1Click:Connect(function()
-    radius = math.max(0, radius - 5)
-    RadiusDisplay.Text = "Radius: " .. radius
-    playSound("12221967")
-end)
-
-IncreaseRadius.MouseButton1Click:Connect(function()
-    radius = math.min(10000, radius + 5)
-    RadiusDisplay.Text = "Radius: " .. radius
-    playSound("12221967")
-end)
-
-MinimizeButton.MouseButton1Click:Connect(function()
-    if MainFrame.Size.Y.Offset > 50 then
-        MainFrame:TweenSize(UDim2.new(MainFrame.Size.X.Scale, MainFrame.Size.X.Offset, 0, 40), "Out", "Quad", 0.25, true)
-        MinimizeButton.Text = "+"
-    else
-        MainFrame:TweenSize(UDim2.new(0, 320, 0, 240), "Out", "Quad", 0.25, true)
-        MinimizeButton.Text = "-"
-    end
-    playSound("12221967")
-end)
-
--- ===========
--- Decal ID apply handling
--- ===========
-local function applyDecalId(newId)
-    if not newId or newId == "" then
-        StarterGui:SetCore("SendNotification", {
-            Title = "Super Ring Parts",
-            Text = "Please enter a valid asset id.",
-            Duration = 3
-        })
-        playSound("12221967")
+-- Map a pattern to parts and position them relative to player
+local function updateShape()
+    -- If not enabled, clear and return parts
+    if not shapeEnabled then
+        clearShape()
         return
     end
-    getgenv().CustomDecalId = tostring(newId)
-    DecalTextBox.Text = getgenv().CustomDecalId
-    StarterGui:SetCore("SendNotification", {
-        Title = "Super Ring Parts",
-        Text = "Decal ID set to: " .. getgenv().CustomDecalId,
-        Duration = 3
-    })
-    playSound("12221967")
 
-    -- Placeholder: call generation function (not implemented here)
-    -- When you confirm your environment, I will implement GenerateShapeFromDecal to fetch and decode the image,
-    -- then spawn parts for non-transparent pixels using the Network.RetainPart/RetainPart logic.
-    -- For now we only store the id and notify you.
-end
-
-ApplyDecalButton.MouseButton1Click:Connect(function()
-    applyDecalId(DecalTextBox.Text)
-end)
-
-DecalTextBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        applyDecalId(DecalTextBox.Text)
+    local shapeEntry = Shapes[currentShapeName]
+    if not shapeEntry then
+        warn("Shape not found:", currentShapeName)
+        return
     end
-end)
 
--- ===========
--- Notifications & chat (kept)
--- ===========
--- Get player thumbnail for icon (kept original username usage)
-local success, userId = pcall(function() return Players:GetUserIdFromNameAsync("Robloxlukasgames") end)
-local thumbIcon = nil
-if success and userId then
-    local thumbType = Enum.ThumbnailType.HeadShot
-    local thumbSize = Enum.ThumbnailSize.Size420x420
-    local content, isReady = Players:GetUserThumbnailAsync(userId, thumbType, thumbSize)
-    thumbIcon = content
-end
+    local pattern = shapeEntry.pattern
+    local rows = #pattern
+    local cols = #pattern[1] or 0
 
-StarterGui:SetCore("SendNotification", {
-    Title = "Super ring parts V5",
-    Text = "enjoy",
-    Icon = thumbIcon,
-    Duration = 5
-})
-StarterGui:SetCore("SendNotification", {
-    Title = "Credits",
-    Text = "Original By Yumm Scriptblox",
-    Icon = thumbIcon,
-    Duration = 5
-})
-StarterGui:SetCore("SendNotification", {
-    Title = "Credits",
-    Text = "Edited By lukas",
-    Icon = thumbIcon,
-    Duration = 5
-})
-
-local function SendChatMessage(message)
-    if TextChatService and TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-        local textChannel = TextChatService.TextChannels.RBXGeneral
-        if textChannel then
-            textChannel:SendAsync(message)
+    -- Count required parts
+    local required = 0
+    for _, row in ipairs(pattern) do
+        for _, v in ipairs(row) do
+            if v == 1 then required = required + 1 end
         end
-    else
-        local success, _ = pcall(function()
-            game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(message, "All")
-        end)
+    end
+
+    ensureAvailableParts(required)
+
+    -- Release any previously assigned parts back to available pool (but keep them in the array)
+    for _, p in ipairs(assignedParts) do
+        -- do nothing special, they remain in availableParts; we'll re-use availableParts directly
+    end
+    assignedParts = {}
+
+    -- Center calculations: use (cols+1)/2 so indexing 1..cols centers correctly
+    local center = humanoidRootPart and (humanoidRootPart.Position + behindOffset) or (Workspace.CurrentCamera and (Workspace.CurrentCamera.CFrame.Position + behindOffset) or Vector3.new(0,5,0))
+    local index = 1
+
+    -- We'll iterate through pattern and assign parts from availableParts in order
+    for y = 1, rows do
+        local row = pattern[y]
+        for x = 1, cols do
+            local val = row[x]
+            if val == 1 then
+                local part = availableParts[index]
+                if not part then
+                    -- fallback: create a new part
+                    part = createPart()
+                    table.insert(availableParts, part)
+                end
+
+                -- Position calculation:
+                local offsetX = (x - (cols + 1) / 2) * partSpacing
+                local offsetY = ((rows + 1) / 2 - y) * partSpacing
+                local targetPos = center + Vector3.new(offsetX, offsetY, 0)
+
+                -- Prepare part appearance & physics
+                part.Anchored = true   -- anchor so it stays in place
+                part.CanCollide = false
+                if part:IsA("BasePart") then
+                    part.Size = Vector3.new(partSpacing, partSpacing, partSpacing) * 0.9
+                    part.Color = shapeEntry.color or part.Color
+                    part.Material = Enum.Material.Neon
+                end
+
+                part.CFrame = CFrame.new(targetPos)
+                part.Parent = ShapeFolder
+
+                table.insert(assignedParts, part)
+                index = index + 1
+            end
+        end
     end
 end
-SendChatMessage("Super Ring Parts V5 By lukas")
 
--- ===========
--- Placeholder generator function
--- (This is a safe stub. If you want me to implement full fetch+PNG decode + spawn parts for non-transparent pixels,
--- tell me whether you run in a normal LocalScript (no HTTP) or an executor with HTTP (syn.request / http.request).
--- If you have HTTP access I will implement the fetching and a simple PNG alpha reader and then spawn parts.)
--- ===========
-local function GenerateShapeFromDecal(assetId, resolution, partSize)
-    -- assetId : string (asset id, numbers only)
-    -- resolution: max dimension to sample (e.g., 32, 64)
-    -- partSize: studs per pixel
-    -- Return: boolean success
-    -- Currently not implemented: this is where the fetch+decode+spawn code would live.
-    warn("GenerateShapeFromDecal called with id:", assetId, "resolution:", resolution, "partSize:", partSize)
-    -- If you confirm you have HTTP + want me to implement, I'll add the fetch + PNG decode + spawning logic.
-    return false
+-- Shape selection helper
+local function setShapeByName(name)
+    if not Shapes[name] then
+        warn("Unknown shape:", name)
+        return
+    end
+    currentShapeName = name
+    if shapeEnabled then
+        updateShape()
+    end
 end
 
--- Expose for other scripts if desired:
-getgenv().SuperRingParts = getgenv().SuperRingParts or {}
-getgenv().SuperRingParts.GenerateShapeFromDecal = GenerateShapeFromDecal
+-- Toggle function
+local function toggleShape()
+    shapeEnabled = not shapeEnabled
+    if not shapeEnabled then
+        clearShape()
+    else
+        updateShape()
+    end
+    print("Shape display", shapeEnabled and "enabled" or "disabled", " — current shape:", currentShapeName)
+end
 
--- End of file
+-- Input handling: 1-4 select shapes, H toggles
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key == Enum.KeyCode.H then
+            toggleShape()
+        elseif key == Enum.KeyCode.One then
+            setShapeByName("Heart")
+        elseif key == Enum.KeyCode.Two then
+            setShapeByName("Star")
+        elseif key == Enum.KeyCode.Three then
+            setShapeByName("Smile")
+        elseif key == Enum.KeyCode.Four then
+            setShapeByName("Triangle")
+        end
+    end
+end)
+
+-- Keep shape following player each frame when enabled
+RunService.RenderStepped:Connect(function()
+    if shapeEnabled then
+        -- Small optimization: only update if player and root part exist
+        if not humanoidRootPart or not humanoidRootPart.Parent then
+            character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+            humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+        end
+        updateShape()
+    end
+end)
+
+-- Optional: expose a simple API on the script for other scripts to use
+local module = {}
+module.Toggle = toggleShape
+module.SetShape = setShapeByName
+module.IsEnabled = function() return shapeEnabled end
+module.GetCurrentShape = function() return currentShapeName end
+
+-- Print usage
+print("Shape display loaded. Press H to toggle. Press 1=Heart, 2=Star, 3=Smile, 4=Triangle to choose shapes.")
+
+return module
