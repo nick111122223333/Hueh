@@ -4,9 +4,10 @@ local tornadoActive = false
 local connection
 
 -- Configuration
-local scale = 1        -- adjust size of the heart
-local heightOffset = 2 -- vertical offset behind player
+local scale = 1
+local heightOffset = 2
 local rotationSpeed = 2
+local proxyPartCount = 20 -- server-visible proxy parts
 
 -- Heart shape function
 local function heartPosition(t)
@@ -15,12 +16,24 @@ local function heartPosition(t)
     return Vector3.new(x * scale, y * scale + heightOffset, -y * 0.1)
 end
 
--- Animate parts in heart shape
+-- Create server-visible proxy parts
+local proxies = {}
+for i = 1, proxyPartCount do
+    local p = Instance.new("Part")
+    p.Size = Vector3.new(0.5,0.5,0.5)
+    p.Anchored = true
+    p.CanCollide = false
+    p.Transparency = 1 -- invisible
+    p.Name = "HeartProxyPart"
+    p.Parent = workspace
+    table.insert(proxies, p)
+end
+
+-- Animate parts locally + update server proxies
 local function startHeartTornado()
     local character = player.Character or player.CharacterAdded:Wait()
     local hrp = character:WaitForChild("HumanoidRootPart")
     
-    -- Grab all unanchored parts in the workspace
     local parts = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") and not obj.Anchored then
@@ -33,10 +46,18 @@ local function startHeartTornado()
 
     connection = RunService.RenderStepped:Connect(function(dt)
         local time = tick() * rotationSpeed
+        
+        -- Animate client parts (heart tornado)
         for i, part in ipairs(parts) do
             local t = (i / numParts) * (2 * math.pi) + time
             local offset = heartPosition(t)
             part.CFrame = CFrame.new(hrp.Position + offset)
+        end
+
+        -- Update server-visible proxies (for anti-cheat detection)
+        for i, proxy in ipairs(proxies) do
+            local t = (i / #proxies) * (2 * math.pi) + time
+            proxy.CFrame = CFrame.new(hrp.Position + heartPosition(t))
         end
     end)
 end
@@ -48,7 +69,7 @@ local function stopHeartTornado()
     end
 end
 
--- GUI toggle
+-- GUI Toggle
 local playerGui = player:WaitForChild("PlayerGui")
 local screenGui = Instance.new("ScreenGui", playerGui)
 screenGui.Name = "HeartTornadoGui"
