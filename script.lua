@@ -381,37 +381,37 @@ end
 workspace.DescendantAdded:Connect(addPart)
 workspace.DescendantRemoving:Connect(removePart)
  
--- Heart-shaped tornado movement
+-- Heart-shaped tornado target calculation (forces only, no teleporting)
 RunService.Heartbeat:Connect(function(deltaTime)
     for _, part in pairs(tornadoParts) do
         local pos = part.Position
-        local dir = (tornadoCenter - pos).unit
-        local distance = (tornadoCenter - pos).Magnitude
 
-        -- Original attraction / physics logic
-        local force = math.min(config.force, distance)
-        part.Velocity = part.Velocity + dir * force * deltaTime
-
-        -- Heart shape calculation
-        local t = tick() * 2 * math.pi / 10  -- controls speed along heart curve
-        local scale = config.radius / 16      -- scales heart to desired size
-
-        -- Parametric heart curve (X-Z plane)
+        -- Parametric heart curve in X-Z plane
+        local t = tick() + part:GetAttribute("offset") or 0  -- each part has a unique offset
+        local scale = config.radius / 16
         local heartX = 16 * math.sin(t)^3 * scale
-        local heartZ = (13 * math.cos(t) - 5*math.cos(2*t) - 2*math.cos(3*t) - math.cos(4*t)) * scale
-        local heartY = tornadoCenter.Y + (config.height * (math.abs(math.sin((pos.Y - tornadoCenter.Y) / config.height))))
+        local heartZ = (13*math.cos(t) - 5*math.cos(2*t) - 2*math.cos(3*t) - math.cos(4*t)) * scale
 
+        -- Desired target position relative to tornado center
         local targetPos = Vector3.new(
             tornadoCenter.X + heartX,
-            heartY,
+            pos.Y,  -- keep existing Y (height) to not break physics
             tornadoCenter.Z + heartZ
         )
 
-        -- Optional: smooth movement towards target
-        local moveDir = (targetPos - pos)
-        part.Velocity = part.Velocity + moveDir * deltaTime * 5
+        -- Calculate force direction
+        local dir = (targetPos - pos)
+        local distance = dir.Magnitude
+        if distance > 0 then
+            dir = dir.Unit
+        end
+
+        -- Apply force smoothly (same as original)
+        local force = math.min(config.force, distance)
+        part.Velocity = part.Velocity + dir * force * deltaTime
     end
 end)
+
 
  
 -- Button functionality
