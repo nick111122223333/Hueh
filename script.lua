@@ -383,35 +383,27 @@ workspace.DescendantRemoving:Connect(removePart)
  
 RunService.Heartbeat:Connect(function()
     if not ringPartsEnabled then return end
-
+ 
     local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if humanoidRootPart then
-        local center = humanoidRootPart.Position
-        local numParts = #parts
-        local t = tick() * (config.rotationSpeed / 20) -- animate over time
-
-        for i, part in ipairs(parts) do
-            if part and part.Parent and not part.Anchored then
-                -- Heart math formula
-                local angle = ((i / numParts) * math.pi * 2) + t
-
-                -- 2D Heart parametric equation
-                local x = 16 * math.sin(angle)^3
-                local y = 13 * math.cos(angle) - 5 * math.cos(2 * angle) - 2 * math.cos(3 * angle) - math.cos(4 * angle)
-                local z = 0
-
-                -- Scale to radius/height config
-                local scale = config.radius / 16
-                local targetPos = center + Vector3.new(x * scale, y * (config.height / 13), z)
-
-                -- Smooth motion
+        local tornadoCenter = humanoidRootPart.Position
+        for _, part in pairs(parts) do
+            if part.Parent and not part.Anchored then
+                local pos = part.Position
+                local distance = (Vector3.new(pos.X, tornadoCenter.Y, pos.Z) - tornadoCenter).Magnitude
+                local angle = math.atan2(pos.Z - tornadoCenter.Z, pos.X - tornadoCenter.X)
+                local newAngle = angle + math.rad(config.rotationSpeed)
+                local targetPos = Vector3.new(
+                    tornadoCenter.X + math.cos(newAngle) * math.min(config.radius, distance),
+                    tornadoCenter.Y + (config.height * (math.abs(math.sin((pos.Y - tornadoCenter.Y) / config.height)))),
+                    tornadoCenter.Z + math.sin(newAngle) * math.min(config.radius, distance)
+                )
                 local directionToTarget = (targetPos - part.Position).unit
                 part.Velocity = directionToTarget * config.attractionStrength
             end
         end
     end
 end)
-
  
 -- Button functionality
 ToggleButton.MouseButton1Click:Connect(function()
@@ -680,4 +672,50 @@ TextButton1.Active = true
  
 TextButton1.MouseButton1Click:Connect(function() 
 loadstring(game:HttpGet("https://pastebin.com/raw/ySHJdZpb",true))()
+end)
+
+-- Heart Shape Button
+local HeartButton = Instance.new("TextButton")
+HeartButton.Size = UDim2.new(0.8, 0, 0, 40)
+HeartButton.Position = UDim2.new(0.1, 0, 0.9, 0) -- adjust position as needed
+HeartButton.Text = "Heart Shape"
+HeartButton.BackgroundColor3 = Color3.fromRGB(255, 105, 180) -- pink
+HeartButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+HeartButton.Font = Enum.Font.Fondamento
+HeartButton.TextSize = 18
+HeartButton.Parent = MainFrame
+
+local HeartCorner = Instance.new("UICorner")
+HeartCorner.CornerRadius = UDim.new(0, 10)
+HeartCorner.Parent = HeartButton
+
+local heartEnabled = false
+
+HeartButton.MouseButton1Click:Connect(function()
+    heartEnabled = not heartEnabled
+    HeartButton.Text = heartEnabled and "Heart On" or "Heart Shape"
+    HeartButton.BackgroundColor3 = heartEnabled and Color3.fromRGB(255, 20, 147) or Color3.fromRGB(255, 105, 180)
+    playSound("12221967")
+end)
+
+-- Heart Shape logic
+RunService.Heartbeat:Connect(function()
+    if not heartEnabled then return end
+
+    local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        local center = humanoidRootPart.Position
+        for i, part in pairs(parts) do
+            if part.Parent and not part.Anchored then
+                -- Parametric heart equation in 3D (XZ-plane with Y as height)
+                local t = (i / #parts) * math.pi * 2
+                local x = 16 * math.sin(t)^3
+                local y = 0
+                local z = 13 * math.cos(t) - 5 * math.cos(2*t) - 2 * math.cos(3*t) - math.cos(4*t)
+                local targetPos = center + Vector3.new(x * 0.5, config.height * 0.5, z * 0.5) -- scale down
+                local directionToTarget = (targetPos - part.Position).unit
+                part.Velocity = directionToTarget * config.attractionStrength
+            end
+        end
+    end
 end)
