@@ -1,12 +1,12 @@
--- Shape display script
--- Adds multiple pixel-art shapes (heart, star, smile, triangle) using reusable parts.
+-- Shape display script (uses ONLY existing, unanchored parts — no new parts created)
 -- Controls:
 --   1-4 = select shape (1 = Heart, 2 = Star, 3 = Smile, 4 = Triangle)
 --   H   = toggle display on / off
 --
--- Notes:
--- - Parts used for shapes will be Anchored while shown and CanCollide = false.
--- - If there are not enough available parts in the workspace, new parts will be created automatically.
+-- Important: This version will NOT create new parts. It only collects existing BaseParts
+-- in Workspace that are NOT Anchored and NOT descendants of the player's character or the ShapePartsFolder.
+-- If there are fewer available parts than pixels in the selected shape, the script will use as many parts
+-- as it has and skip remaining pixels (no new parts will be made).
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -67,7 +67,6 @@ local Shapes = {
         color = Color3.fromRGB(100, 200, 255)
     },
     Triangle = {
-        -- small isosceles triangle (5x5)
         pattern = {
             {0,0,1,0,0},
             {0,1,1,1,0},
@@ -79,57 +78,45 @@ local Shapes = {
     }
 }
 
--- Collect available (reusable) parts: prefer unanchored non-character parts
-local availableParts = {}
-for _, part in ipairs(Workspace:GetDescendants()) do
-    if part:IsA("BasePart") and not part:IsDescendantOf(character) then
-        -- We'll treat these parts as reusable. Ensure they don't collide.
-        part.CanCollide = false
-        table.insert(availableParts, part)
+-- Collect available parts: only existing parts that satisfy criteria
+local function collectAvailableParts()
+    local parts = {}
+    for _, part in ipairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local isInCharacter = character and part:IsDescendantOf(character)
+            local isInFolder = part:IsDescendantOf(ShapeFolder)
+            if (not part.Anchored) and (not isInCharacter) and (not isInFolder) then
+                -- mark as non-collidable for safer placement
+                pcall(function() part.CanCollide = false end)
+                table.insert(parts, part)
+            end
+        end
     end
+    return parts
 end
 
--- Utility: create a new part to use
-local function createPart()
-    local p = Instance.new("Part")
-    p.Size = Vector3.new(1.5, 1.5, 1.5)
-    p.Anchored = false -- we'll anchor when showing shapes
-    p.CanCollide = false
-    p.Material = Enum.Material.Neon
-    p.Name = "ShapePart"
-    p.Parent = Workspace
-    return p
-end
-
--- Ensure we have at least n parts available (adds new parts if necessary)
-local function ensureAvailableParts(n)
-    while #availableParts < n do
-        table.insert(availableParts, createPart())
-    end
-end
-
--- Keep track of which parts are currently assigned to shape so we can release them
+-- assignedParts are the parts currently used to render the shape (they are taken from availableParts)
 local assignedParts = {}
 
--- Clear current shape: unassign parts and return them to Workspace (and un-anchor)
-local function clearShape()
+local function releaseAssignedParts()
     for _, p in ipairs(assignedParts) do
-        if p and p.Parent then
-            p.Parent = Workspace
-        end
         if p and p:IsA("BasePart") then
+            -- Return part to Workspace root (keep it unanchored)
+            p.Parent = Workspace
             p.Anchored = false
+            -- Keep CanCollide false to avoid collisions
             p.CanCollide = false
         end
     end
     assignedParts = {}
 end
 
--- Map a pattern to parts and position them relative to player
+-- Map a pattern to existing parts and position them relative to player.
+-- IMPORTANT: This function will NOT create new parts. If there are not enough parts,
+-- it will use as many as available and skip remaining pixels.
 local function updateShape()
-    -- If not enabled, clear and return parts
     if not shapeEnabled then
-        clearShape()
+        releaseAssignedParts()
         return
     end
 
@@ -139,11 +126,31 @@ local function updateShape()
         return
     end
 
+    -- Recollect available parts each update to reflect workspace changes
+    local availableParts = collectAvailableParts()
+
+    -- If previously assigned parts still exist and are valid, prefer to reuse them first.
+    -- We'll build a working pool that excludes those parts (to avoid double-using).
+    local pool = {}
+    local assignedSet = {}
+    for _, p in ipairs(assignedParts) do
+        if p and p.Parent and p:IsA("BasePart") then
+            assignedSet[p] = true
+            table.insert(pool, p)
+        end
+    end
+    -- Append other available parts not already assigned
+    for _, p in ipairs(availableParts) do
+        if not assignedSet[p] then
+            table.insert(pool, p)
+        end
+    end
+
     local pattern = shapeEntry.pattern
     local rows = #pattern
     local cols = #pattern[1] or 0
 
-    -- Count required parts
+    -- Count required pixels
     local required = 0
     for _, row in ipairs(pattern) do
         for _, v in ipairs(row) do
@@ -151,53 +158,81 @@ local function updateShape()
         end
     end
 
-    ensureAvailableParts(required)
-
-    -- Release any previously assigned parts back to available pool (but keep them in the array)
-    for _, p in ipairs(assignedParts) do
-        -- do nothing special, they remain in availableParts; we'll re-use availableParts directly
+    if #pool < 1 then
+        warn("No available unanchored parts found in Workspace to form shape. Script will not create parts.")
+        releaseAssignedParts()
+        return
     end
-    assignedParts = {}
 
-    -- Center calculations: use (cols+1)/2 so indexing 1..cols centers correctly
-    local center = humanoidRootPart and (humanoidRootPart.Position + behindOffset) or (Workspace.CurrentCamera and (Workspace.CurrentCamera.CFrame.Position + behindOffset) or Vector3.new(0,5,0))
-    local index = 1
+    if #pool < required then
+        -- Inform but still proceed using as many as possible
+        warn(string.format("Not enough available parts: need %d but only found %d. Shape will be partial.", required, #pool))
+    end
 
-    -- We'll iterate through pattern and assign parts from availableParts in order
+    -- Clear previous assigned parts' anchoring/parenting only for those not reused.
+    -- We'll compute new assignedParts list as we map pixels.
+    local newAssigned = {}
+    local poolIndex = 1
+
+    local center = (humanoidRootPart and humanoidRootPart.Position + behindOffset) or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position + behindOffset) or Vector3.new(0,5,0)
+
     for y = 1, rows do
         local row = pattern[y]
         for x = 1, cols do
-            local val = row[x]
-            if val == 1 then
-                local part = availableParts[index]
-                if not part then
-                    -- fallback: create a new part
-                    part = createPart()
-                    table.insert(availableParts, part)
+            if row[x] == 1 then
+                if poolIndex > #pool then
+                    -- out of parts, skip remaining pixels
+                    -- continue
+                else
+                    local part = pool[poolIndex]
+                    poolIndex = poolIndex + 1
+
+                    if part and part:IsA("BasePart") then
+                        -- Position calculation: center the pattern
+                        local offsetX = (x - (cols + 1) / 2) * partSpacing
+                        local offsetY = ((rows + 1) / 2 - y) * partSpacing
+                        local targetPos = center + Vector3.new(offsetX, offsetY, 0)
+
+                        -- Prepare part appearance & physics: anchor while showing
+                        part.Anchored = true
+                        part.CanCollide = false
+                        pcall(function()
+                            part.Size = Vector3.new(partSpacing, partSpacing, partSpacing) * 0.9
+                            if part:IsA("BasePart") and shapeEntry.color then
+                                part.Color = shapeEntry.color
+                                part.Material = Enum.Material.Neon
+                            end
+                        end)
+
+                        part.CFrame = CFrame.new(targetPos)
+                        part.Parent = ShapeFolder
+
+                        table.insert(newAssigned, part)
+                    end
                 end
-
-                -- Position calculation:
-                local offsetX = (x - (cols + 1) / 2) * partSpacing
-                local offsetY = ((rows + 1) / 2 - y) * partSpacing
-                local targetPos = center + Vector3.new(offsetX, offsetY, 0)
-
-                -- Prepare part appearance & physics
-                part.Anchored = true   -- anchor so it stays in place
-                part.CanCollide = false
-                if part:IsA("BasePart") then
-                    part.Size = Vector3.new(partSpacing, partSpacing, partSpacing) * 0.9
-                    part.Color = shapeEntry.color or part.Color
-                    part.Material = Enum.Material.Neon
-                end
-
-                part.CFrame = CFrame.new(targetPos)
-                part.Parent = ShapeFolder
-
-                table.insert(assignedParts, part)
-                index = index + 1
             end
         end
     end
+
+    -- Release any old assigned parts that weren't reused
+    for _, old in ipairs(assignedParts) do
+        local reused = false
+        for _, v in ipairs(newAssigned) do
+            if old == v then
+                reused = true
+                break
+            end
+        end
+        if not reused then
+            if old and old:IsA("BasePart") then
+                old.Parent = Workspace
+                old.Anchored = false
+                old.CanCollide = false
+            end
+        end
+    end
+
+    assignedParts = newAssigned
 end
 
 -- Shape selection helper
@@ -216,7 +251,7 @@ end
 local function toggleShape()
     shapeEnabled = not shapeEnabled
     if not shapeEnabled then
-        clearShape()
+        releaseAssignedParts()
     else
         updateShape()
     end
@@ -245,8 +280,8 @@ end)
 -- Keep shape following player each frame when enabled
 RunService.RenderStepped:Connect(function()
     if shapeEnabled then
-        -- Small optimization: only update if player and root part exist
-        if not humanoidRootPart or not humanoidRootPart.Parent then
+        -- refresh character references if needed
+        if not character or not character.Parent then
             character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
             humanoidRootPart = character:WaitForChild("HumanoidRootPart")
         end
@@ -254,14 +289,5 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Optional: expose a simple API on the script for other scripts to use
-local module = {}
-module.Toggle = toggleShape
-module.SetShape = setShapeByName
-module.IsEnabled = function() return shapeEnabled end
-module.GetCurrentShape = function() return currentShapeName end
-
--- Print usage
-print("Shape display loaded. Press H to toggle. Press 1=Heart, 2=Star, 3=Smile, 4=Triangle to choose shapes.")
-
-return module
+-- Final note
+print("Shape display loaded (use EXISTING unanchored parts only). Press H to toggle. Press 1=Heart, 2=Star, 3=Smile, 4=Triangle to choose shapes.")
