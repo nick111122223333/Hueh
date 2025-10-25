@@ -1,12 +1,9 @@
--- Heart tornado using existing parts
-
 local player = game.Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local tornadoActive = false
 local connection
 
 -- Configuration
-local partsFolder = workspace:WaitForChild("HeartParts") -- folder containing parts to use
 local scale = 1        -- adjust size of the heart
 local heightOffset = 2 -- vertical offset behind player
 local rotationSpeed = 2
@@ -22,8 +19,17 @@ end
 local function startHeartTornado()
     local character = player.Character or player.CharacterAdded:Wait()
     local hrp = character:WaitForChild("HumanoidRootPart")
-    local parts = partsFolder:GetChildren()
+    
+    -- Grab all unanchored parts in the workspace
+    local parts = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and not obj.Anchored then
+            table.insert(parts, obj)
+        end
+    end
+
     local numParts = #parts
+    if numParts == 0 then return end
 
     connection = RunService.RenderStepped:Connect(function(dt)
         local time = tick() * rotationSpeed
