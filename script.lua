@@ -11,72 +11,98 @@ local LocalPlayer = Players.LocalPlayer
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
--- Folder for parts
-local Folder = Instance.new("Folder", Workspace)
-Folder.Name = "SuperRingPartsFolder"
+-- Folder for controlling parts
+local ShapeFolder = Instance.new("Folder", Workspace)
+ShapeFolder.Name = "ShapePartsFolder"
 
--- Default ring parts setup
+-- Super Ring / Existing Part Handling
 if not getgenv().Network then
-    getgenv().Network = {
-        BaseParts = {},
-        Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
-    }
+    getgenv().Network = { BaseParts = {}, Velocity = Vector3.new(14.46262424,14.46262424,14.46262424) }
+
     Network.RetainPart = function(Part)
-        if typeof(Part) == "Instance" and Part:IsA("BasePart") and Part:IsDescendantOf(workspace) then
+        if typeof(Part) == "Instance" and Part:IsA("BasePart") and Part:IsDescendantOf(Workspace) then
             table.insert(Network.BaseParts, Part)
             Part.CustomPhysicalProperties = PhysicalProperties.new(0,0,0,0,0)
             Part.CanCollide = false
         end
     end
+
     local function EnablePartControl()
-        LocalPlayer.ReplicationFocus = workspace
+        LocalPlayer.ReplicationFocus = Workspace
         RunService.Heartbeat:Connect(function()
             sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
             for _, Part in pairs(Network.BaseParts) do
-                if Part:IsDescendantOf(workspace) then
+                if Part:IsDescendantOf(Workspace) then
                     Part.Velocity = Network.Velocity
                 end
             end
         end)
     end
+
     EnablePartControl()
 end
 
--- GUI Creation (simplified)
-local ScreenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
-ScreenGui.Name = "SuperRingPartsGUI"
-local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0,220,0,190)
-MainFrame.Position = UDim2.new(0.5,-110,0.5,-95)
-MainFrame.BackgroundColor3 = Color3.fromRGB(0,102,51)
-local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0,20)
-
--- Toggle button for ring parts
-local ToggleButton = Instance.new("TextButton", MainFrame)
-ToggleButton.Size = UDim2.new(0.8,0,0,35)
-ToggleButton.Position = UDim2.new(0.1,0,0.3,0)
-ToggleButton.Text = "Ring Parts Off"
-ToggleButton.BackgroundColor3 = Color3.fromRGB(160,82,45)
-ToggleButton.TextColor3 = Color3.fromRGB(255,255,255)
-
--- Ring Parts Logic
-local ringPartsEnabled = false
-ToggleButton.MouseButton1Click:Connect(function()
-    ringPartsEnabled = not ringPartsEnabled
-    ToggleButton.Text = ringPartsEnabled and "Ring Parts On" or "Ring Parts Off"
-    ToggleButton.BackgroundColor3 = ringPartsEnabled and Color3.fromRGB(50,205,50) or Color3.fromRGB(160,82,45)
-end)
-
+-- Ring / Tornado Settings
 local radius = 50
 local height = 100
 local rotationSpeed = 0.5
 local attractionStrength = 1000
+local ringPartsEnabled = false
+local shapeEnabled = false
+local partSpacing = 2
+local behindOffset = Vector3.new(0,0,-5)
 
--- Track parts
+-- Collect existing unanchored parts
+local function getAvailableParts()
+    local available = {}
+    for _, part in pairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") and not part.Anchored and not part:IsDescendantOf(character) then
+            table.insert(available, part)
+        end
+    end
+    return available
+end
+
+-- Map parts to a 2D shape pattern (1 = solid pixel, 0 = transparent)
+local function mapPartsToShape(pattern, centerPosition)
+    local availableParts = getAvailableParts()
+    if #availableParts == 0 then return end
+
+    local index = 1
+    local rows = #pattern
+    local cols = #pattern[1]
+
+    for y,row in ipairs(pattern) do
+        for x,val in ipairs(row) do
+            if val == 1 and index <= #availableParts then
+                local part = availableParts[index]
+                index += 1
+
+                local offsetX = (x - cols/2) * partSpacing
+                local offsetY = (rows/2 - y) * partSpacing
+                local targetPos = centerPosition + Vector3.new(offsetX, offsetY, behindOffset.Z)
+
+                part.Velocity = (targetPos - part.Position) * 10
+                part.CanCollide = false
+                part.Parent = ShapeFolder
+            end
+        end
+    end
+end
+
+-- Example shape (heart)
+local heartPattern = {
+    {0,1,0,1,0},
+    {1,1,1,1,1},
+    {1,1,1,1,1},
+    {0,1,1,1,0},
+    {0,0,1,0,0}
+}
+
+-- Collect and manage all available parts for tornado ring
 local parts = {}
 local function RetainPart(Part)
-    if Part:IsA("BasePart") and not Part.Anchored and Part:IsDescendantOf(workspace) then
+    if Part:IsA("BasePart") and not Part.Anchored and Part:IsDescendantOf(Workspace) then
         if Part.Parent == LocalPlayer.Character or Part:IsDescendantOf(LocalPlayer.Character) then
             return false
         end
@@ -89,102 +115,63 @@ end
 
 local function addPart(part)
     if RetainPart(part) then
-        if not table.find(parts, part) then
-            table.insert(parts, part)
-        end
+        if not table.find(parts, part) then table.insert(parts, part) end
     end
 end
 
 local function removePart(part)
     local index = table.find(parts, part)
-    if index then table.remove(parts,index) end
+    if index then table.remove(parts, index) end
 end
 
-for _, part in pairs(workspace:GetDescendants()) do addPart(part) end
-workspace.DescendantAdded:Connect(addPart)
-workspace.DescendantRemoving:Connect(removePart)
+for _, part in pairs(Workspace:GetDescendants()) do addPart(part) end
+Workspace.DescendantAdded:Connect(addPart)
+Workspace.DescendantRemoving:Connect(removePart)
 
+-- Heart / Shape + Ring update loop
 RunService.Heartbeat:Connect(function()
-    if not ringPartsEnabled then return end
-    if humanoidRootPart then
-        local center = humanoidRootPart.Position
+    local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+
+    local tornadoCenter = humanoidRootPart.Position
+
+    -- Tornado / Ring
+    if ringPartsEnabled then
         for _, part in pairs(parts) do
             if part.Parent and not part.Anchored then
                 local pos = part.Position
-                local distance = (Vector3.new(pos.X, center.Y, pos.Z)-center).Magnitude
-                local angle = math.atan2(pos.Z-center.Z, pos.X-center.X)
+                local distance = (Vector3.new(pos.X,tornadoCenter.Y,pos.Z) - tornadoCenter).Magnitude
+                local angle = math.atan2(pos.Z - tornadoCenter.Z, pos.X - tornadoCenter.X)
                 local newAngle = angle + math.rad(rotationSpeed)
                 local targetPos = Vector3.new(
-                    center.X + math.cos(newAngle)*math.min(radius,distance),
-                    center.Y + (height*(math.abs(math.sin((pos.Y-center.Y)/height)))),
-                    center.Z + math.sin(newAngle)*math.min(radius,distance)
+                    tornadoCenter.X + math.cos(newAngle) * math.min(radius, distance),
+                    tornadoCenter.Y + (height * (math.abs(math.sin((pos.Y - tornadoCenter.Y) / height)))),
+                    tornadoCenter.Z + math.sin(newAngle) * math.min(radius, distance)
                 )
-                local directionToTarget = (targetPos-part.Position).Unit
+                local directionToTarget = (targetPos - part.Position).unit
                 part.Velocity = directionToTarget * attractionStrength
             end
         end
     end
+
+    -- Shape behind player
+    if shapeEnabled then
+        mapPartsToShape(heartPattern, tornadoCenter + behindOffset)
+    end
 end)
 
--- SHAPE FROM DECAL
-local shapeEnabled = false
-local behindOffset = Vector3.new(0,0,-5)
-local partSize = 2
-local referencePosition = humanoidRootPart.Position + behindOffset
+-- GUI / Toggle Buttons (simplified for demonstration)
+-- You can integrate these into your existing GUI
+local ScreenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+ScreenGui.Name = "ShapeGUI"
 
--- Function to create shape from 2D pattern (1 = pixel exists, 0 = transparent)
-local function createShape(pattern)
-    Folder:ClearAllChildren()
-    if not pattern then return end
-    for y,row in ipairs(pattern) do
-        for x,val in ipairs(row) do
-            if val == 1 then
-                local part = Instance.new("Part")
-                part.Size = Vector3.new(partSize,partSize,partSize)
-                part.Anchored = true
-                part.CanCollide = false
-                part.Color = Color3.fromRGB(255,0,0)
-                part.Position = referencePosition + Vector3.new((x-#row/2)*partSize,(#pattern/2-y)*partSize,0)
-                part.Parent = Folder
-            end
-        end
-    end
-end
-
--- Example pattern: simple heart
-local heartPattern = {
-    {0,1,0,1,0},
-    {1,1,1,1,1},
-    {1,1,1,1,1},
-    {0,1,1,1,0},
-    {0,0,1,0,0}
-}
-
--- GUI toggle for shape
-local ShapeButton = Instance.new("TextButton", MainFrame)
-ShapeButton.Size = UDim2.new(0.8,0,0,35)
-ShapeButton.Position = UDim2.new(0.1,0,0.7,0)
-ShapeButton.Text = "Shape Off"
-ShapeButton.BackgroundColor3 = Color3.fromRGB(160,82,45)
-ShapeButton.TextColor3 = Color3.fromRGB(255,255,255)
-
-ShapeButton.MouseButton1Click:Connect(function()
+local ToggleShapeButton = Instance.new("TextButton", ScreenGui)
+ToggleShapeButton.Size = UDim2.new(0, 200, 0, 50)
+ToggleShapeButton.Position = UDim2.new(0.5, -100, 0, 100)
+ToggleShapeButton.Text = "Toggle Shape"
+ToggleShapeButton.MouseButton1Click:Connect(function()
     shapeEnabled = not shapeEnabled
-    ShapeButton.Text = shapeEnabled and "Shape On" or "Shape Off"
-    if shapeEnabled then
-        createShape(heartPattern)
-    else
-        Folder:ClearAllChildren()
-    end
+    ToggleShapeButton.Text = shapeEnabled and "Shape On" or "Shape Off"
 end)
 
--- Follow player
-RunService.Heartbeat:Connect(function()
-    if shapeEnabled then
-        referencePosition = humanoidRootPart.Position + behindOffset
-        for _, part in pairs(Folder:GetChildren()) do
-            local offset = part.Position - referencePosition
-            part.Position = referencePosition + offset
-        end
-    end
-end)
+-- Optional: Integrate your existing toggle/radius buttons here
