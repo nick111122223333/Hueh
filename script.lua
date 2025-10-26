@@ -396,24 +396,25 @@ RunService.Heartbeat:Connect(function()
 				local angle = math.atan2(pos.Z - tornadoCenter.Z, pos.X - tornadoCenter.X)
 				local newAngle = angle + math.rad(config.rotationSpeed)
 
-				-- ❤️ Upright full-heart shape formula
-				local heartRadius = config.radius * (
-					math.sin(newAngle) * math.sqrt(math.abs(math.cos(newAngle))) / 
-					(math.sin(newAngle) + 1.4) - 
-					2 * math.sin(newAngle) + 2
-				)
+				-- ❤️ Full heart made by duplicating & mirroring the half-heart formula
+				local sinAngle = math.sin(newAngle)
+				local isBottomHalf = (newAngle % (2 * math.pi)) > math.pi
+				local heartRadius
+				if isBottomHalf then
+					heartRadius = config.radius * (1 + sinAngle)
+				else
+					heartRadius = config.radius * (1 - sinAngle)
+				end
 
-				-- Convert to 3D upright heart around player:
-				-- X = circular rotation around player
-				-- Y,Z = heart shape (upright)
-				local heartY = tornadoCenter.Y + heartRadius * math.sin(newAngle)
-				local heartZ = tornadoCenter.Z + heartRadius * math.cos(newAngle)
+				-- Convert polar -> Cartesian (X, Z)
+				local targetX = tornadoCenter.X + heartRadius * math.cos(newAngle)
+				local targetZ = tornadoCenter.Z + heartRadius * math.sin(newAngle)
 
-				-- Small optional rotation around player’s body
-				local heartX = tornadoCenter.X + math.cos(newAngle) * config.radius * 0.2
+				-- Vertical wave movement for the tornado effect
+				local targetY = tornadoCenter.Y + (config.height * math.abs(math.sin((pos.Y - tornadoCenter.Y) / config.height)))
 
-				-- Final target position (upright heart)
-				local targetPos = Vector3.new(heartX, heartY, heartZ)
+				-- Final target position
+				local targetPos = Vector3.new(targetX, targetY, targetZ)
 
 				-- Move part toward the target
 				local directionToTarget = (targetPos - part.Position).Unit
@@ -422,6 +423,7 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 end)
+
 
 
 
