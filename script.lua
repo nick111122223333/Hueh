@@ -381,47 +381,64 @@ end
 workspace.DescendantAdded:Connect(addPart)
 workspace.DescendantRemoving:Connect(removePart)
 
-RunService.Heartbeat:Connect(function()
-	if not ringPartsEnabled then return end
+-- Heart movement replacement (replace your previous RunService.Heartbeat block with this)
+local rotationOffset = 0
 
-	local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if humanoidRootPart then
-		local tornadoCenter = humanoidRootPart.Position
-		for _, part in pairs(parts) do
-			if part.Parent and not part.Anchored then
-				local pos = part.Position
-				local distance = (Vector3.new(pos.X, tornadoCenter.Y, pos.Z) - tornadoCenter).Magnitude
+RunService.Heartbeat:Connect(function(dt)
+    if not ringPartsEnabled then return end
+    local character = LocalPlayer.Character
+    local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
 
-				-- Compute the angle around the player
-				local angle = math.atan2(pos.Z - tornadoCenter.Z, pos.X - tornadoCenter.X)
-				local newAngle = angle + math.rad(config.rotationSpeed)
+    local center = humanoidRootPart.Position
 
-				-- ❤️ Full heart made by duplicating & mirroring the half-heart formula
-				local sinAngle = math.sin(newAngle)
-				local isBottomHalf = (newAngle % (2 * math.pi)) > math.pi
-				local heartRadius
-				if isBottomHalf then
-					heartRadius = config.radius * (1 + sinAngle)
-				else
-					heartRadius = config.radius * (1 - sinAngle)
-				end
+    -- update rotation offset using rotationSpeed (degrees per second in config)
+    rotationOffset = rotationOffset + math.rad(config.rotationSpeed) * (dt or 0.016)
 
-				-- Convert polar -> Cartesian (X, Z)
-				local targetX = tornadoCenter.X + heartRadius * math.cos(newAngle)
-				local targetZ = tornadoCenter.Z + heartRadius * math.sin(newAngle)
+    -- local copy so #parts is consistent during iteration
+    local snapshot = {}
+    for i, p in ipairs(parts) do
+        if p and p.Parent and not p.Anchored then
+            snapshot[#snapshot + 1] = p
+        end
+    end
 
-				-- Vertical wave movement for the tornado effect
-				local targetY = tornadoCenter.Y + (config.height * math.abs(math.sin((pos.Y - tornadoCenter.Y) / config.height)))
+    local total = #snapshot
+    if total == 0 then return end
 
-				-- Final target position
-				local targetPos = Vector3.new(targetX, targetY, targetZ)
+    for i, part in ipairs(snapshot) do
+        -- distribute parts evenly around the parametric heart curve
+        local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
 
-				-- Move part toward the target
-				local directionToTarget = (targetPos - part.Position).Unit
-				part.Velocity = directionToTarget * config.attractionStrength
-			end
-		end
-	end
+        -- Classic heart parametric equations
+        local s = math.sin(phase)
+        local c = math.cos(phase)
+        local xParam = 16 * (s * s * s)                       -- 16*sin^3(t)
+        local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase) -- vertical param used for shape
+
+        -- scale the parametric curve to config.radius
+        local scale = (config.radius > 0) and (config.radius / 16) or 1
+
+        local targetX = center.X + xParam * scale
+        local targetZ = center.Z + yParam * scale
+
+        -- map the curve's yParam to vertical displacement using config.height
+        local targetY = center.Y + (yParam / 13) * config.height
+
+        local targetPos = Vector3.new(targetX, targetY, targetZ)
+
+        local direction = targetPos - part.Position
+        local dist = direction.Magnitude
+
+        if dist > 0.1 then
+            -- speed proportional to distance but clamped to avoid huge spikes
+            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
+            part.Velocity = direction.Unit * speed
+        else
+            -- keep small velocities zero to avoid jitter
+            part.Velocity = Vector3.new(0, 0, 0)
+        end
+    end
 end)
 
 
