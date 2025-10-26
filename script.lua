@@ -386,6 +386,8 @@ config.spinSpeed = config.spinSpeed or config.rotationSpeed
 local rotationOffset = 0          -- used as spin angle (yaw)
 local shapePhaseOffset = 0       -- offset for parametric sampling (keeps distribution stable)
 
+local rotationOffset = 0
+
 RunService.Heartbeat:Connect(function(dt)
     if not ringPartsEnabled then return end
     local character = LocalPlayer.Character
@@ -394,10 +396,10 @@ RunService.Heartbeat:Connect(function(dt)
 
     local center = humanoidRootPart.Position
 
-    -- update rotation offset using spinSpeed (degrees per second in config)
-    rotationOffset = rotationOffset + math.rad(config.spinSpeed) * (dt or 0.016)
+    -- update rotation offset using rotationSpeed (degrees per second in config)
+    rotationOffset = rotationOffset + math.rad(config.rotationSpeed) * (dt or 0.016)
 
-    -- snapshot parts to avoid mutation issues during iteration
+    -- local copy so #parts is consistent during iteration
     local snapshot = {}
     for i, p in ipairs(parts) do
         if p and p.Parent and not p.Anchored then
@@ -408,43 +410,38 @@ RunService.Heartbeat:Connect(function(dt)
     local total = #snapshot
     if total == 0 then return end
 
+    -- star configuration (fallback defaults if not provided in config)
+    local points = math.max(2, math.floor(config.starPoints or 5)) -- number of star points
+    local spikiness = math.clamp(config.starSpikiness or 0.65, 0, 0.95) -- how deep the inner "valleys" are (0..1)
+    local baseRadius = (config.radius > 0) and config.radius or 16
+    local verticalBias = config.height or 0 -- if you want vertical variation, set config.height
+
     for i, part in ipairs(snapshot) do
-        -- Evenly distribute parts along the heart parametric curve
-        local basePhase = ((i - 1) / total) * (2 * math.pi)
-        local phase = basePhase + shapePhaseOffset
+        -- distribute parts evenly around the parametric star curve
+        local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
 
-        -- Classic heart parametric equations (2D heart in local X,Z)
-        local s = math.sin(phase)
-        local c = math.cos(phase)
-        local xParam = 16 * (s * s * s) -- 16*sin^3(t)
-        local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase)
+        -- star in polar coordinates: r(θ) = baseRadius * (1 + spikiness * cos(points * θ))
+        -- cos(points * θ) creates the alternating outer/inner lobes for a star shape
+        local r = baseRadius * (1 + spikiness * math.cos(points * phase))
+        if r < 0.001 then r = 0.001 end
 
-        -- scale parametric curve to config.radius
-        local scale = (config.radius > 0) and (config.radius / 16) or 1
+        local targetX = center.X + r * math.cos(phase)
+        local targetZ = center.Z + r * math.sin(phase)
 
-        -- local (heart) coordinates before yaw rotation
-        local localX = xParam * scale   -- maps to world X after rotation
-        local localZ = yParam * scale   -- maps to world Z after rotation
-        local localY = (yParam / 13) * config.height -- vertical displacement (Y axis)
+        -- subtle vertical variation tied to the star lobes; scale by config.height
+        local targetY = center.Y + (verticalBias * 0.4) * math.sin(points * phase)
 
-        -- Apply yaw rotation (rotate heart around Y axis by rotationOffset)
-        local spin = rotationOffset
-        local cosS = math.cos(spin)
-        local sinS = math.sin(spin)
-        local rotatedX = cosS * localX - sinS * localZ
-        local rotatedZ = sinS * localX + cosS * localZ
-
-        local targetPos = Vector3.new(center.X + rotatedX, center.Y + localY, center.Z + rotatedZ)
+        local targetPos = Vector3.new(targetX, targetY, targetZ)
 
         local direction = targetPos - part.Position
         local dist = direction.Magnitude
 
         if dist > 0.1 then
             -- speed proportional to distance but clamped to avoid huge spikes
-            local maxSpeed = math.max(50, config.attractionStrength or 100)
-            local speed = math.clamp(dist * 8, 10, maxSpeed)
+            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
             part.Velocity = direction.Unit * speed
         else
+            -- keep small velocities zero to avoid jitter
             part.Velocity = Vector3.new(0, 0, 0)
         end
     end
