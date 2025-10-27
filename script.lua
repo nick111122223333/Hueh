@@ -384,6 +384,9 @@ workspace.DescendantRemoving:Connect(removePart)
 
 config.spinSpeed = config.spinSpeed or config.rotationSpeed
 
+-- Fixed conditional structure and variable name (displayedNumber)
+-- Original logic preserved, only cleaned up the if/elseif/else blocks.
+
 local rotationOffset = 0          -- used as spin angle (yaw)
 local rotationOffset1 = 0
 
@@ -395,8 +398,8 @@ RunService.Heartbeat:Connect(function(dt)
 
     local center = humanoidRootPart.Position
 
-	if displayedNumber == 0 then
-		local tornadoCenter = humanoidRootPart.Position
+    if displayedNumber == 0 then
+        local tornadoCenter = humanoidRootPart.Position
         for _, part in pairs(parts) do
             if part.Parent and not part.Anchored then
                 local pos = part.Position
@@ -412,104 +415,105 @@ RunService.Heartbeat:Connect(function(dt)
                 part.Velocity = directionToTarget * config.attractionStrength
             end
         end
-	else if displayNumber == 1 then
-		rotationOffset = rotationOffset + math.rad(config.rotationSpeed) * (dt or 0.016)
 
-	    -- local copy so #parts is consistent during iteration
-	    local snapshot = {}
-	    for i, p in ipairs(parts) do
-	        if p and p.Parent and not p.Anchored then
-	            snapshot[#snapshot + 1] = p
-	        end
-	    end
-	
-	    local total = #snapshot
-	    if total == 0 then return end
-	
-		    	for i, part in ipairs(snapshot) do
-		        -- distribute parts evenly around the parametric heart curve
-		        local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
-		
-		        -- Classic heart parametric equations
-		        local s = math.sin(phase)
-		        local c = math.cos(phase)
-		        local xParam = 16 * (s * s * s)                       -- 16*sin^3(t)
-		        local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase) -- vertical param used for shape
-		
-		        -- scale the parametric curve to config.radius
-		        local scale = (config.radius > 0) and (config.radius / 16) or 1
-		
-		        local targetX = center.X + xParam * scale
-		        local targetZ = center.Z + yParam * scale
-		
-		        -- map the curve's yParam to vertical displacement using config.height
-		        local targetY = center.Y + (yParam / 13) * config.height
-		
-		        local targetPos = Vector3.new(targetX, targetY, targetZ)
-		
-		        local direction = targetPos - part.Position
-		        local dist = direction.Magnitude
-		
-		        if dist > 0.1 then
-		            -- speed proportional to distance but clamped to avoid huge spikes
-		            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
-		            part.Velocity = direction.Unit * speed
-		        else
-		            -- keep small velocities zero to avoid jitter
-		            part.Velocity = Vector3.new(0, 0, 0)
-		        end
-			end
-		end
-	else 
-			-- update rotation offset using rotationSpeed (degrees per second in config)
-	    rotationOffset1 = rotationOffset1 + math.rad(config.rotationSpeed) * (dt or 0.016)
-	
-	    -- local copy so #parts is consistent during iteration
-	    local snapshot = {}
-	    for i, p in ipairs(parts) do
-	        if p and p.Parent and not p.Anchored then
-	            snapshot[#snapshot + 1] = p
-	        end
-	    end
-	
-	    local total = #snapshot
-	    if total == 0 then return end
-	
-	    -- star configuration (fallback defaults if not provided in config)
-	    local points = math.max(2, math.floor(config.starPoints or 5)) -- number of star points
-	    local spikiness = math.clamp(config.starSpikiness or 0.65, 0, 0.95) -- how deep the inner "valleys" are (0..1)
-	    local baseRadius = (config.radius > 0) and config.radius or 16
-	    local verticalBias = config.height or 0 -- if you want vertical variation, set config.height
-	
-	    for i, part in ipairs(snapshot) do
-	        -- distribute parts evenly around the parametric star curve
-	        local phase = rotationOffset1 + ((i - 1) / total) * (2 * math.pi)
-	
-	        -- star in polar coordinates: r(θ) = baseRadius * (1 + spikiness * cos(points * θ))
-	        -- cos(points * θ) creates the alternating outer/inner lobes for a star shape
-	        local r = baseRadius * (1 + spikiness * math.cos(points * phase))
-	        if r < 0.001 then r = 0.001 end
-	
-	        local targetX = center.X + r * math.cos(phase)
-	        local targetZ = center.Z + r * math.sin(phase)
-	
-	        -- subtle vertical variation tied to the star lobes; scale by config.height
-	        local targetY = center.Y + (verticalBias * 0.4) * math.sin(points * phase)
-	
-	        local targetPos = Vector3.new(targetX, targetY, targetZ)
-	
-	        local direction = targetPos - part.Position
-	        local dist = direction.Magnitude
-	
-	        if dist > 0.1 then
-	            -- speed proportional to distance but clamped to avoid huge spikes
-	            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
-	            part.Velocity = direction.Unit * speed
-	        else
-	            -- keep small velocities zero to avoid jitter
-	            part.Velocity = Vector3.new(0, 0, 0)
-	        end
-	    end
+    elseif displayedNumber == 1 then
+        rotationOffset = rotationOffset + math.rad(config.rotationSpeed) * (dt or 0.016)
+
+        -- local copy so #parts is consistent during iteration
+        local snapshot = {}
+        for i, p in ipairs(parts) do
+            if p and p.Parent and not p.Anchored then
+                snapshot[#snapshot + 1] = p
+            end
+        end
+
+        local total = #snapshot
+        if total == 0 then return end
+
+        for i, part in ipairs(snapshot) do
+            -- distribute parts evenly around the parametric heart curve
+            local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
+
+            -- Classic heart parametric equations
+            local s = math.sin(phase)
+            local c = math.cos(phase)
+            local xParam = 16 * (s * s * s)                       -- 16*sin^3(t)
+            local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase) -- vertical param used for shape
+
+            -- scale the parametric curve to config.radius
+            local scale = (config.radius > 0) and (config.radius / 16) or 1
+
+            local targetX = center.X + xParam * scale
+            local targetZ = center.Z + yParam * scale
+
+            -- map the curve's yParam to vertical displacement using config.height
+            local targetY = center.Y + (yParam / 13) * config.height
+
+            local targetPos = Vector3.new(targetX, targetY, targetZ)
+
+            local direction = targetPos - part.Position
+            local dist = direction.Magnitude
+
+            if dist > 0.1 then
+                -- speed proportional to distance but clamped to avoid huge spikes
+                local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
+                part.Velocity = direction.Unit * speed
+            else
+                -- keep small velocities zero to avoid jitter
+                part.Velocity = Vector3.new(0, 0, 0)
+            end
+        end
+
+    else
+        -- update rotation offset using rotationSpeed (degrees per second in config)
+        rotationOffset1 = rotationOffset1 + math.rad(config.rotationSpeed) * (dt or 0.016)
+
+        -- local copy so #parts is consistent during iteration
+        local snapshot = {}
+        for i, p in ipairs(parts) do
+            if p and p.Parent and not p.Anchored then
+                snapshot[#snapshot + 1] = p
+            end
+        end
+
+        local total = #snapshot
+        if total == 0 then return end
+
+        -- star configuration (fallback defaults if not provided in config)
+        local points = math.max(2, math.floor(config.starPoints or 5)) -- number of star points
+        local spikiness = math.clamp(config.starSpikiness or 0.65, 0, 0.95) -- how deep the inner "valleys" are (0..1)
+        local baseRadius = (config.radius > 0) and config.radius or 16
+        local verticalBias = config.height or 0 -- if you want vertical variation, set config.height
+
+        for i, part in ipairs(snapshot) do
+            -- distribute parts evenly around the parametric star curve
+            local phase = rotationOffset1 + ((i - 1) / total) * (2 * math.pi)
+
+            -- star in polar coordinates: r(θ) = baseRadius * (1 + spikiness * cos(points * θ))
+            -- cos(points * θ) creates the alternating outer/inner lobes for a star shape
+            local r = baseRadius * (1 + spikiness * math.cos(points * phase))
+            if r < 0.001 then r = 0.001 end
+
+            local targetX = center.X + r * math.cos(phase)
+            local targetZ = center.Z + r * math.sin(phase)
+
+            -- subtle vertical variation tied to the star lobes; scale by config.height
+            local targetY = center.Y + (verticalBias * 0.4) * math.sin(points * phase)
+
+            local targetPos = Vector3.new(targetX, targetY, targetZ)
+
+            local direction = targetPos - part.Position
+            local dist = direction.Magnitude
+
+            if dist > 0.1 then
+                -- speed proportional to distance but clamped to avoid huge spikes
+                local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
+                part.Velocity = direction.Unit * speed
+            else
+                -- keep small velocities zero to avoid jitter
+                part.Velocity = Vector3.new(0, 0, 0)
+            end
+        end
     end
 end)
 
