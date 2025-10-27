@@ -399,7 +399,7 @@ RunService.Heartbeat:Connect(function(dt)
     local center = humanoidRootPart.Position
 
     if displayedNumber == 0 then
-        local tornadoCenter = humanoidRootPart.Position
+    	local tornadoCenter = humanoidRootPart.Position
         for _, part in pairs(parts) do
             if part.Parent and not part.Anchored then
                 local pos = part.Position
@@ -415,7 +415,6 @@ RunService.Heartbeat:Connect(function(dt)
                 part.Velocity = directionToTarget * config.attractionStrength
             end
         end
-
     elseif displayedNumber == 1 then
         rotationOffset = rotationOffset + math.rad(config.rotationSpeed) * (dt or 0.016)
 
@@ -463,7 +462,6 @@ RunService.Heartbeat:Connect(function(dt)
                 part.Velocity = Vector3.new(0, 0, 0)
             end
         end
-
     else
         -- update rotation offset using rotationSpeed (degrees per second in config)
         rotationOffset1 = rotationOffset1 + math.rad(config.rotationSpeed) * (dt or 0.016)
