@@ -458,7 +458,6 @@ RunService.Heartbeat:Connect(function(dt)
 	            -- keep small velocities zero to avoid jitter
 	            part.Velocity = Vector3.new(0, 0, 0)
 	        end
-	    	end
 		end
 	else 
 			-- update rotation offset using rotationSpeed (degrees per second in config)
