@@ -426,38 +426,39 @@ RunService.Heartbeat:Connect(function(dt)
 	    local total = #snapshot
 	    if total == 0 then return end
 	
-	    for i, part in ipairs(snapshot) do
-	        -- distribute parts evenly around the parametric heart curve
-	        local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
-	
-	        -- Classic heart parametric equations
-	        local s = math.sin(phase)
-	        local c = math.cos(phase)
-	        local xParam = 16 * (s * s * s)                       -- 16*sin^3(t)
-	        local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase) -- vertical param used for shape
-	
-	        -- scale the parametric curve to config.radius
-	        local scale = (config.radius > 0) and (config.radius / 16) or 1
-	
-	        local targetX = center.X + xParam * scale
-	        local targetZ = center.Z + yParam * scale
-	
-	        -- map the curve's yParam to vertical displacement using config.height
-	        local targetY = center.Y + (yParam / 13) * config.height
-	
-	        local targetPos = Vector3.new(targetX, targetY, targetZ)
-	
-	        local direction = targetPos - part.Position
-	        local dist = direction.Magnitude
-	
-	        if dist > 0.1 then
-	            -- speed proportional to distance but clamped to avoid huge spikes
-	            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
-	            part.Velocity = direction.Unit * speed
-	        else
-	            -- keep small velocities zero to avoid jitter
-	            part.Velocity = Vector3.new(0, 0, 0)
-	        end
+		    	for i, part in ipairs(snapshot) do
+		        -- distribute parts evenly around the parametric heart curve
+		        local phase = rotationOffset + ((i - 1) / total) * (2 * math.pi)
+		
+		        -- Classic heart parametric equations
+		        local s = math.sin(phase)
+		        local c = math.cos(phase)
+		        local xParam = 16 * (s * s * s)                       -- 16*sin^3(t)
+		        local yParam = 13 * c - 5 * math.cos(2 * phase) - 2 * math.cos(3 * phase) - math.cos(4 * phase) -- vertical param used for shape
+		
+		        -- scale the parametric curve to config.radius
+		        local scale = (config.radius > 0) and (config.radius / 16) or 1
+		
+		        local targetX = center.X + xParam * scale
+		        local targetZ = center.Z + yParam * scale
+		
+		        -- map the curve's yParam to vertical displacement using config.height
+		        local targetY = center.Y + (yParam / 13) * config.height
+		
+		        local targetPos = Vector3.new(targetX, targetY, targetZ)
+		
+		        local direction = targetPos - part.Position
+		        local dist = direction.Magnitude
+		
+		        if dist > 0.1 then
+		            -- speed proportional to distance but clamped to avoid huge spikes
+		            local speed = math.clamp(dist * 8, 10, math.max(50, config.attractionStrength))
+		            part.Velocity = direction.Unit * speed
+		        else
+		            -- keep small velocities zero to avoid jitter
+		            part.Velocity = Vector3.new(0, 0, 0)
+		        end
+			end
 		end
 	else 
 			-- update rotation offset using rotationSpeed (degrees per second in config)
@@ -509,6 +510,7 @@ RunService.Heartbeat:Connect(function(dt)
 	            part.Velocity = Vector3.new(0, 0, 0)
 	        end
 	    end
+    end
 end)
 
 
